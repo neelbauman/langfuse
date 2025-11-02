@@ -10,8 +10,10 @@ services:
     depends_on: &langfuse-depends-on
       postgres:
         condition: service_healthy
-      minio:
+      rclone-s3:
         condition: service_healthy
+      # minio:
+      #   condition: service_healthy
       redis:
         condition: service_healthy
       clickhouse:
@@ -33,15 +35,15 @@ services:
       LANGFUSE_USE_AZURE_BLOB: ${LANGFUSE_USE_AZURE_BLOB:-false}
       LANGFUSE_S3_EVENT_UPLOAD_BUCKET: ${LANGFUSE_S3_EVENT_UPLOAD_BUCKET:-langfuse}
       LANGFUSE_S3_EVENT_UPLOAD_REGION: ${LANGFUSE_S3_EVENT_UPLOAD_REGION:-auto}
-      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-minio}
-      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-miniosecret} # CHANGEME
-      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://minio:9000}
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID:-my-s3-key}
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY:-my-s3-secret} # CHANGEME
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: ${LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT:-http://rclone-s3:9000}
       LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE:-true}
       LANGFUSE_S3_EVENT_UPLOAD_PREFIX: ${LANGFUSE_S3_EVENT_UPLOAD_PREFIX:-events/}
       LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: ${LANGFUSE_S3_MEDIA_UPLOAD_BUCKET:-langfuse}
       LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_MEDIA_UPLOAD_REGION:-auto}
-      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-minio}
-      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-miniosecret} # CHANGEME
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID:-my-s3-key}
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY:-my-s3-secret} # CHANGEME
       LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:9090}
       LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: ${LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE:-true}
       LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
@@ -49,10 +51,10 @@ services:
       LANGFUSE_S3_BATCH_EXPORT_BUCKET: ${LANGFUSE_S3_BATCH_EXPORT_BUCKET:-langfuse}
       LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}
       LANGFUSE_S3_BATCH_EXPORT_REGION: ${LANGFUSE_S3_BATCH_EXPORT_REGION:-auto}
-      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_ENDPOINT:-http://minio:9000}
+      LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_ENDPOINT:-http://rclone-s3:9000}
       LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-http://localhost:9090}
-      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID:-minio}
-      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY:-miniosecret} # CHANGEME
+      LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID:-my-s3-key}
+      LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY:-my-s3-secret} # CHANGEME
       LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: ${LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE:-true}
       LANGFUSE_INGESTION_QUEUE_DELAY_MS: ${LANGFUSE_INGESTION_QUEUE_DELAY_MS:-}
       LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ${LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS:-}
@@ -106,26 +108,51 @@ services:
       retries: 10
       start_period: 1s
 
-  minio:
-    image: docker.io/minio/minio
+  rclone-s3:
+    image: rclone/rclone:latest
+    container_name: rclone-s3
     restart: always
-    entrypoint: sh
-    # create the 'langfuse' bucket before starting the service
-    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret} # CHANGEME
+    command: >
+      serve s3 gdrive:observability-storage/langfuse
+      --addr :9000
+      --vfs-cache-mode full
+      --auth-key "my-s3-key,my-s3-secret"
+      --config /config/rclone.conf
+      --cache-dir /cache
     ports:
-      - 9090:9000
-      - 127.0.0.1:9091:9001
+      # LangfuseのUI/SDKがメディアをアップロード/ダウンロードするためにホストの9090ポートに公開
+      - "9090:9000"
     volumes:
-      - langfuse_minio_data:/data
+      # CHANGEME: ホストマシンのrclone設定ファイルへのパス
+      - ~/.config/rclone/rclone.conf:/config/rclone.conf:ro
+      # CHANGEME: rcloneがVFSキャッシュを保存するホストのパス
+      - ~/.cache/rclone/rclone-cache:/cache
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 1s
+      test: ["CMD", "rclone", "lsf", "gdrive:observability-storage/langfuse", "--config", "/config/rclone.conf"]
+      interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 1s
+
+  # minio:
+  #   image: docker.io/minio/minio
+  #   restart: always
+  #   entrypoint: sh
+  #   # create the 'langfuse' bucket before starting the service
+  #   command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+  #   environment:
+  #     MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+  #     MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-miniosecret} # CHANGEME
+  #   ports:
+  #     - 9090:9000
+  #     - 127.0.0.1:9091:9001
+  #   volumes:
+  #     - langfuse_minio_data:/data
+  #   healthcheck:
+  #     test: ["CMD", "mc", "ready", "local"]
+  #     interval: 1s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 1s
 
   redis:
     image: docker.io/redis:7
@@ -167,5 +194,5 @@ volumes:
     driver: local
   langfuse_clickhouse_logs:
     driver: local
-  langfuse_minio_data:
-    driver: local
+  # langfuse_minio_data:
+  #   driver: local
